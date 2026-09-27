@@ -126,25 +126,50 @@
     (hash-secret-with-key proof hash-key)
     (hash-secret proof)))
 
-(defn issue-challenge [options: Challenge-Issue-Options]
-  -> [issued: Issued-Challenge, ok: bool]
-  (when (= options.identity "")
-    (return (empty-issued-challenge) false))
+(defn challenge-from-proof
+  [options: Challenge-Issue-Options, proof: string]
+  -> [record: Challenge, ok: bool]
+  (when (or (= options.id "") (= options.identity "") (= proof ""))
+    (return (empty-challenge) false))
   (when (and (= options.method .Code) (< (count options.hash-key) 32))
-    (return (empty-issued-challenge) false))
+    (return (empty-challenge) false))
   (let [ttl-ms (if (> options.ttl-ms 0)
                  options.ttl-ms
                  (if (= options.method .Code)
                    Default-Code-TTL-MS
                    Default-Magic-Link-TTL-MS))
-        digits (if (> options.digits 0) options.digits Default-Code-Digits)
         max-attempts (if (> options.max-attempts 0)
                        options.max-attempts
                        (if (= options.method .Code)
                          Default-Code-Max-Attempts
                          1))]
     (when (or (<= ttl-ms 0) (<= max-attempts 0))
-      (return (empty-issued-challenge) false))
+      (return (empty-challenge) false))
+    (let [[proof-hash hash-ok?]
+          (challenge-proof-hash options.method proof options.hash-key)]
+      (when (not hash-ok?) (return (empty-challenge) false))
+      (return
+        (Challenge
+          :id (owned options.id)
+          :identity (owned options.identity)
+          :method options.method
+          :proof-hash proof-hash
+          :created-at-ms options.now-ms
+          :expires-at-ms (+ options.now-ms ttl-ms)
+          :consumed-at-ms 0
+          :consumed? false
+          :failed-attempt-count 0
+          :max-attempts max-attempts
+          :metadata (owned options.metadata))
+        true))))
+
+(defn issue-challenge [options: Challenge-Issue-Options]
+  -> [issued: Issued-Challenge, ok: bool]
+  (when (= options.identity "")
+    (return (empty-issued-challenge) false))
+  (when (and (= options.method .Code) (< (count options.hash-key) 32))
+    (return (empty-issued-challenge) false))
+  (let [digits (if (> options.digits 0) options.digits Default-Code-Digits)]
     (let [[id id-ok?] (id-or-random-uuid options.id)]
       (when (not id-ok?)
         (return (empty-issued-challenge) false))
@@ -153,25 +178,24 @@
         (when (not proof-ok?)
           (return (empty-issued-challenge) false))
         (defer (delete proof))
-        (let [[proof-hash hash-ok?]
-              (challenge-proof-hash options.method proof options.hash-key)]
-          (when (not hash-ok?)
+        (let [resolved-options
+              (Challenge-Issue-Options
+                :id id
+                :identity options.identity
+                :method options.method
+                :ttl-ms options.ttl-ms
+                :digits options.digits
+                :max-attempts options.max-attempts
+                :metadata options.metadata
+                :hash-key options.hash-key
+                :now-ms options.now-ms)
+              [record record-ok?]
+              (challenge-from-proof resolved-options proof)]
+          (when (not record-ok?)
             (return (empty-issued-challenge) false))
           (return
             (Issued-Challenge
-              :record
-              (Challenge
-                :id (owned id)
-                :identity (owned options.identity)
-                :method options.method
-                :proof-hash proof-hash
-                :created-at-ms options.now-ms
-                :expires-at-ms (+ options.now-ms ttl-ms)
-                :consumed-at-ms 0
-                :consumed? false
-                :failed-attempt-count 0
-                :max-attempts max-attempts
-                :metadata (owned options.metadata))
+              :record record
               :proof (owned proof))
             true))))))
 

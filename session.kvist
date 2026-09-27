@@ -69,33 +69,51 @@
 (defn- empty-issued-session [] -> Issued-Session
   (zero Issued-Session))
 
+(defn session-from-credential
+  [options: Session-Issue-Options, credential: string]
+  -> [record: Session, ok: bool]
+  (when (or (= options.id "") (= options.subject "") (= credential ""))
+    (return (empty-session) false))
+  (let [ttl-ms (if (> options.ttl-ms 0) options.ttl-ms Default-Session-TTL-MS)]
+    (when (<= ttl-ms 0) (return (empty-session) false))
+    (let [[credential-hash hash-ok?] (hash-secret credential)]
+      (when (not hash-ok?) (return (empty-session) false))
+      (return
+        (Session
+          :id (owned options.id)
+          :subject (owned options.subject)
+          :credential-hash credential-hash
+          :created-at-ms options.now-ms
+          :expires-at-ms (+ options.now-ms ttl-ms)
+          :revoked-at-ms 0
+          :revoked? false
+          :metadata (owned options.metadata))
+        true))))
+
 (defn issue-session [options: Session-Issue-Options]
   -> [issued: Issued-Session, ok: bool]
   (when (= options.subject "") (return (empty-issued-session) false))
-  (let [ttl-ms (if (> options.ttl-ms 0) options.ttl-ms Default-Session-TTL-MS)]
-    (when (<= ttl-ms 0) (return (empty-issued-session) false))
-    (let [[id id-ok?] (id-or-random-uuid options.id)]
+  (let [[id id-ok?] (id-or-random-uuid options.id)]
       (when (not id-ok?) (return (empty-issued-session) false))
       (defer (delete id))
       (let [[credential credential-ok?] (random-token)]
         (when (not credential-ok?) (return (empty-issued-session) false))
         (defer (delete credential))
-        (let [[credential-hash hash-ok?] (hash-secret credential)]
-          (when (not hash-ok?) (return (empty-issued-session) false))
+        (let [resolved-options
+              (Session-Issue-Options
+                :id id
+                :subject options.subject
+                :ttl-ms options.ttl-ms
+                :metadata options.metadata
+                :now-ms options.now-ms)
+              [record record-ok?]
+              (session-from-credential resolved-options credential)]
+          (when (not record-ok?) (return (empty-issued-session) false))
           (return
             (Issued-Session
-              :record
-              (Session
-                :id (owned id)
-                :subject (owned options.subject)
-                :credential-hash credential-hash
-                :created-at-ms options.now-ms
-                :expires-at-ms (+ options.now-ms ttl-ms)
-                :revoked-at-ms 0
-                :revoked? false
-                :metadata (owned options.metadata))
+              :record record
               :credential (owned credential))
-            true))))))
+            true)))))
 
 (defn session-credential-hash [credential: string]
   -> [encoded: string, ok: bool]
