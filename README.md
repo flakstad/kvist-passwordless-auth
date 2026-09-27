@@ -26,22 +26,26 @@ odin test . -vet -strict-style
 
 ## Ownership
 
-Returned strings and records own their string fields. Delete them with the
-matching helper:
+Issuance functions and hash helpers return owned strings and records. They
+accept an optional allocator and must be released with the same allocator:
 
 - `delete_issued_challenge`
-- `delete_challenge_result`
 - `delete_issued_session`
-- `delete_session_result`
 
 Credential hash functions return owned strings when `ok` is true. Challenge
-and session inputs borrow strings from the caller.
+and session inputs borrow strings from the caller. `verify_challenge` and
+`check_session` return non-owning views: their strings remain valid only while
+the input record remains alive and must not be deleted separately.
 
 Use `issue_challenge` and `issue_session` in normal application flows. Storage
 adapters and deterministic tests may use `challenge_from_proof` and
 `session_from_credential`; these apply the same validation and hashing while
 accepting caller-supplied plaintext values. Delete successful returned records
 with `delete_challenge` or `delete_session`.
+
+All owning procedures default to `context.allocator`, but consumers that use a
+temporary arena or tracking allocator should pass it explicitly to both the
+constructor and matching delete helper.
 
 ## Persistence
 

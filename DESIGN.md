@@ -40,6 +40,8 @@ the credential hash.
 
 ## Memory
 
-Public issuance and verification results own cloned strings so callers can
-free them independently of persisted/input records. Explicit delete helpers
-make that ownership visible at the API boundary.
+Issuance records and credentials own their strings. Their constructors accept
+an optional allocator, and their delete helpers accept the allocator used to
+create them. Verification and session-classification results are borrowed
+views over the input record; they allocate nothing and are valid only while
+that record remains alive.

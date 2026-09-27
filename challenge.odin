@@ -81,32 +81,22 @@ Challenge_Issue_Options :: struct {
 	now_ms:       i64,
 }
 
-delete_challenge :: proc(challenge: Challenge) {
-	delete(challenge.id)
-	delete(challenge.identity)
-	delete(challenge.proof_hash)
-	delete(challenge.metadata)
+delete_challenge :: proc(challenge: Challenge, allocator := context.allocator) {
+	delete(challenge.id, allocator)
+	delete(challenge.identity, allocator)
+	delete(challenge.proof_hash, allocator)
+	delete(challenge.metadata, allocator)
 }
 
-delete_public_challenge :: proc(challenge: Public_Challenge) {
-	delete(challenge.id)
-	delete(challenge.identity)
-	delete(challenge.metadata)
-}
-
-delete_issued_challenge :: proc(issued: Issued_Challenge) {
-	delete_challenge(issued.record)
-	delete(issued.proof)
-}
-
-delete_challenge_result :: proc(result: Challenge_Result) {
-	if result.has_challenge do delete_public_challenge(result.challenge)
+delete_issued_challenge :: proc(issued: Issued_Challenge, allocator := context.allocator) {
+	delete_challenge(issued.record, allocator)
+	delete(issued.proof, allocator)
 }
 
 public_challenge :: proc(record: ^Challenge) -> Public_Challenge {
 	return {
-		id                   = owned_string(record.id),
-		identity             = owned_string(record.identity),
+		id                   = record.id,
+		identity             = record.identity,
 		method               = record.method,
 		created_at_ms        = record.created_at_ms,
 		expires_at_ms        = record.expires_at_ms,
@@ -114,7 +104,7 @@ public_challenge :: proc(record: ^Challenge) -> Public_Challenge {
 		consumed             = record.consumed,
 		failed_attempt_count = record.failed_attempt_count,
 		max_attempts         = record.max_attempts,
-		metadata             = owned_string(record.metadata),
+		metadata             = record.metadata,
 	}
 }
 
@@ -125,22 +115,28 @@ challenge_result :: proc(status: Challenge_Status) -> Challenge_Result {
 	}
 }
 
-challenge_proof :: proc(method: Challenge_Method, digits: int) -> (proof: string, ok: bool) {
-	if method == .Code do return random_code_with_digits(digits)
-	return random_token()
+challenge_proof :: proc(
+	method: Challenge_Method,
+	digits: int,
+	allocator := context.allocator,
+) -> (proof: string, ok: bool) {
+	if method == .Code do return random_code_with_digits(digits, allocator)
+	return random_token(allocator)
 }
 
 challenge_proof_hash :: proc(
 	method: Challenge_Method,
 	proof, hash_key: string,
+	allocator := context.allocator,
 ) -> (encoded: string, ok: bool) {
-	if method == .Code do return hash_secret_with_key(proof, hash_key)
-	return hash_secret(proof)
+	if method == .Code do return hash_secret_with_key(proof, hash_key, allocator)
+	return hash_secret(proof, allocator)
 }
 
 challenge_from_proof :: proc(
 	options: Challenge_Issue_Options,
 	proof: string,
+	allocator := context.allocator,
 ) -> (record: Challenge, ok: bool) {
 	if options.id == "" || options.identity == "" || proof == "" do return
 	if options.method == .Code && len(options.hash_key) < 32 do return
@@ -156,25 +152,30 @@ challenge_from_proof :: proc(
 		if options.method == .Code do max_attempts = DEFAULT_CODE_MAX_ATTEMPTS
 	}
 
-	proof_hash, hash_ok := challenge_proof_hash(options.method, proof, options.hash_key)
+	proof_hash, hash_ok := challenge_proof_hash(
+		options.method,
+		proof,
+		options.hash_key,
+		allocator,
+	)
 	if !hash_ok do return
 
-	id, id_ok := clone_string(options.id)
+	id, id_ok := clone_string(options.id, allocator)
 	if !id_ok {
-		delete(proof_hash)
+		delete(proof_hash, allocator)
 		return
 	}
-	identity, identity_ok := clone_string(options.identity)
+	identity, identity_ok := clone_string(options.identity, allocator)
 	if !identity_ok {
-		delete(id)
-		delete(proof_hash)
+		delete(id, allocator)
+		delete(proof_hash, allocator)
 		return
 	}
-	metadata, metadata_ok := clone_string(options.metadata)
+	metadata, metadata_ok := clone_string(options.metadata, allocator)
 	if !metadata_ok {
-		delete(id)
-		delete(identity)
-		delete(proof_hash)
+		delete(id, allocator)
+		delete(identity, allocator)
+		delete(proof_hash, allocator)
 		return
 	}
 
@@ -192,29 +193,32 @@ challenge_from_proof :: proc(
 	return record, true
 }
 
-issue_challenge :: proc(options: Challenge_Issue_Options) -> (issued: Issued_Challenge, ok: bool) {
+issue_challenge :: proc(
+	options: Challenge_Issue_Options,
+	allocator := context.allocator,
+) -> (issued: Issued_Challenge, ok: bool) {
 	if options.identity == "" do return
 	if options.method == .Code && len(options.hash_key) < 32 do return
 
 	digits := options.digits
 	if digits <= 0 do digits = DEFAULT_CODE_DIGITS
 
-	id, id_ok := id_or_random_uuid(options.id)
+	id, id_ok := id_or_random_uuid(options.id, allocator)
 	if !id_ok do return
-	defer delete(id)
+	defer delete(id, allocator)
 
-	proof, proof_ok := challenge_proof(options.method, digits)
+	proof, proof_ok := challenge_proof(options.method, digits, allocator)
 	if !proof_ok do return
-	defer delete(proof)
+	defer delete(proof, allocator)
 
 	resolved := options
 	resolved.id = id
-	record, record_ok := challenge_from_proof(resolved, proof)
+	record, record_ok := challenge_from_proof(resolved, proof, allocator)
 	if !record_ok do return
 
-	proof_copy, proof_copy_ok := clone_string(proof)
+	proof_copy, proof_copy_ok := clone_string(proof, allocator)
 	if !proof_copy_ok {
-		delete_challenge(record)
+		delete_challenge(record, allocator)
 		return
 	}
 	return {record = record, proof = proof_copy}, true
@@ -223,10 +227,11 @@ issue_challenge :: proc(options: Challenge_Issue_Options) -> (issued: Issued_Cha
 challenge_selector :: proc(
 	method: Challenge_Method,
 	id, proof: string,
+	allocator := context.allocator,
 ) -> (selector: string, ok: bool) {
-	if method == .Magic_Link do return hash_secret(proof)
+	if method == .Magic_Link do return hash_secret(proof, allocator)
 	if id == "" do return
-	return clone_string(id)
+	return clone_string(id, allocator)
 }
 
 verify_challenge :: proc(

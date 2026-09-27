@@ -49,54 +49,45 @@ Session_Issue_Options :: struct {
 	now_ms:   i64,
 }
 
-delete_session :: proc(session: Session) {
-	delete(session.id)
-	delete(session.subject)
-	delete(session.credential_hash)
-	delete(session.metadata)
+delete_session :: proc(session: Session, allocator := context.allocator) {
+	delete(session.id, allocator)
+	delete(session.subject, allocator)
+	delete(session.credential_hash, allocator)
+	delete(session.metadata, allocator)
 }
 
-delete_public_session :: proc(session: Public_Session) {
-	delete(session.id)
-	delete(session.subject)
-	delete(session.metadata)
-}
-
-delete_issued_session :: proc(issued: Issued_Session) {
-	delete_session(issued.record)
-	delete(issued.credential)
-}
-
-delete_session_result :: proc(result: Session_Result) {
-	if result.has_session do delete_public_session(result.session)
+delete_issued_session :: proc(issued: Issued_Session, allocator := context.allocator) {
+	delete_session(issued.record, allocator)
+	delete(issued.credential, allocator)
 }
 
 session_from_credential :: proc(
 	options: Session_Issue_Options,
 	credential: string,
+	allocator := context.allocator,
 ) -> (record: Session, ok: bool) {
 	if options.id == "" || options.subject == "" || credential == "" do return
 	ttl_ms := options.ttl_ms
 	if ttl_ms <= 0 do ttl_ms = DEFAULT_SESSION_TTL_MS
 
-	credential_hash, hash_ok := hash_secret(credential)
+	credential_hash, hash_ok := hash_secret(credential, allocator)
 	if !hash_ok do return
-	id, id_ok := clone_string(options.id)
+	id, id_ok := clone_string(options.id, allocator)
 	if !id_ok {
-		delete(credential_hash)
+		delete(credential_hash, allocator)
 		return
 	}
-	subject, subject_ok := clone_string(options.subject)
+	subject, subject_ok := clone_string(options.subject, allocator)
 	if !subject_ok {
-		delete(id)
-		delete(credential_hash)
+		delete(id, allocator)
+		delete(credential_hash, allocator)
 		return
 	}
-	metadata, metadata_ok := clone_string(options.metadata)
+	metadata, metadata_ok := clone_string(options.metadata, allocator)
 	if !metadata_ok {
-		delete(id)
-		delete(subject)
-		delete(credential_hash)
+		delete(id, allocator)
+		delete(subject, allocator)
+		delete(credential_hash, allocator)
 		return
 	}
 
@@ -111,44 +102,51 @@ session_from_credential :: proc(
 	return record, true
 }
 
-issue_session :: proc(options: Session_Issue_Options) -> (issued: Issued_Session, ok: bool) {
+issue_session :: proc(
+	options: Session_Issue_Options,
+	allocator := context.allocator,
+) -> (issued: Issued_Session, ok: bool) {
 	if options.subject == "" do return
 
-	id, id_ok := id_or_random_uuid(options.id)
+	id, id_ok := id_or_random_uuid(options.id, allocator)
 	if !id_ok do return
-	defer delete(id)
+	defer delete(id, allocator)
 
-	credential, credential_ok := random_token()
+	credential, credential_ok := random_token(allocator)
 	if !credential_ok do return
-	defer delete(credential)
+	defer delete(credential, allocator)
 
 	resolved := options
 	resolved.id = id
-	record, record_ok := session_from_credential(resolved, credential)
+	record, record_ok := session_from_credential(resolved, credential, allocator)
 	if !record_ok do return
 
-	credential_copy, copy_ok := clone_string(credential)
+	credential_copy, copy_ok := clone_string(credential, allocator)
 	if !copy_ok {
-		delete_session(record)
+		delete_session(record, allocator)
 		return
 	}
 	return {record = record, credential = credential_copy}, true
 }
 
-session_credential_hash :: proc(credential: string) -> (encoded: string, ok: bool) {
-	return hash_secret(credential)
+session_credential_hash :: proc(
+	credential: string,
+	allocator := context.allocator,
+) -> (encoded: string, ok: bool) {
+	return hash_secret(credential, allocator)
 }
 
 session_credential_hash_candidates :: proc(
 	credential: string,
+	allocator := context.allocator,
 ) -> (current, legacy: string, ok: bool) {
 	current_ok: bool
-	current, current_ok = hash_secret(credential)
+	current, current_ok = hash_secret(credential, allocator)
 	if !current_ok do return
 	legacy_ok: bool
-	legacy, legacy_ok = legacy_sha256_hex(credential)
+	legacy, legacy_ok = legacy_sha256_hex(credential, allocator)
 	if !legacy_ok {
-		delete(current)
+		delete(current, allocator)
 		return "", "", false
 	}
 	return current, legacy, true
@@ -166,18 +164,15 @@ check_session :: proc(record: ^Session, now_ms: i64) -> Session_Result {
 		return result
 	}
 
-	id, _ := clone_string(record.id)
-	subject, _ := clone_string(record.subject)
-	metadata, _ := clone_string(record.metadata)
 	result.status = .Active
 	result.session = {
-		id            = id,
-		subject       = subject,
+		id            = record.id,
+		subject       = record.subject,
 		created_at_ms = record.created_at_ms,
 		expires_at_ms = record.expires_at_ms,
 		revoked_at_ms = record.revoked_at_ms,
 		revoked       = record.revoked,
-		metadata      = metadata,
+		metadata      = record.metadata,
 	}
 	result.has_session = true
 	return result
@@ -185,6 +180,5 @@ check_session :: proc(record: ^Session, now_ms: i64) -> Session_Result {
 
 session_active :: proc(record: ^Session, now_ms: i64) -> bool {
 	result := check_session(record, now_ms)
-	defer delete_session_result(result)
 	return result.status == .Active
 }

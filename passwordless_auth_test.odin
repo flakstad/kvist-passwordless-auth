@@ -73,14 +73,12 @@ magic_link_is_single_use_and_expires_at_the_boundary :: proc(t: ^testing.T) {
 	testing.expect_value(t, selector, issued.record.proof_hash)
 
 	result := verify_challenge(&issued.record, .Magic_Link, issued.proof, "", TEST_NOW_MS)
-	defer delete_challenge_result(result)
 	testing.expect_value(t, result.status, Challenge_Status.Verified)
 	testing.expect(t, result.has_challenge)
 	testing.expect_value(t, result.challenge.identity, "CaseSensitiveIdentity")
 	apply_challenge_transition(&issued.record, result.transition)
 
 	again := verify_challenge(&issued.record, .Magic_Link, issued.proof, "", TEST_NOW_MS)
-	defer delete_challenge_result(again)
 	testing.expect_value(t, again.status, Challenge_Status.Consumed)
 
 	issued.record.consumed = false
@@ -91,7 +89,6 @@ magic_link_is_single_use_and_expires_at_the_boundary :: proc(t: ^testing.T) {
 		"",
 		issued.record.expires_at_ms,
 	)
-	defer delete_challenge_result(expired)
 	testing.expect_value(t, expired.status, Challenge_Status.Expired)
 }
 
@@ -110,17 +107,14 @@ code_failures_exhaust_the_attempt_budget :: proc(t: ^testing.T) {
 	defer delete_issued_challenge(issued)
 
 	first := verify_challenge(&issued.record, .Code, "000000", TEST_CODE_KEY, TEST_NOW_MS)
-	defer delete_challenge_result(first)
 	testing.expect_value(t, first.status, Challenge_Status.Invalid_Proof)
 	apply_challenge_transition(&issued.record, first.transition)
 
 	final := verify_challenge(&issued.record, .Code, "000000", TEST_CODE_KEY, TEST_NOW_MS)
-	defer delete_challenge_result(final)
 	testing.expect_value(t, final.status, Challenge_Status.Attempts_Exhausted)
 	apply_challenge_transition(&issued.record, final.transition)
 
 	locked := verify_challenge(&issued.record, .Code, issued.proof, TEST_CODE_KEY, TEST_NOW_MS)
-	defer delete_challenge_result(locked)
 	testing.expect_value(t, locked.status, Challenge_Status.Attempts_Exhausted)
 }
 
@@ -139,19 +133,16 @@ session_lifecycle_hides_the_credential_hash :: proc(t: ^testing.T) {
 
 	testing.expect(t, !strings.contains(issued.record.credential_hash, issued.credential))
 	active := check_session(&issued.record, TEST_NOW_MS)
-	defer delete_session_result(active)
 	testing.expect_value(t, active.status, Session_Status.Active)
 	testing.expect(t, active.has_session)
 	testing.expect_value(t, active.session.subject, "user-42")
 
 	expired := check_session(&issued.record, issued.record.expires_at_ms)
-	defer delete_session_result(expired)
 	testing.expect_value(t, expired.status, Session_Status.Expired_Session)
 
 	issued.record.revoked = true
 	issued.record.revoked_at_ms = TEST_NOW_MS
 	revoked := check_session(&issued.record, TEST_NOW_MS)
-	defer delete_session_result(revoked)
 	testing.expect_value(t, revoked.status, Session_Status.Revoked_Session)
 }
 
@@ -203,25 +194,25 @@ issuance_policy_has_stable_boundaries :: proc(t: ^testing.T) {
 }
 
 @(test)
-owned_results_release_all_memory :: proc(t: ^testing.T) {
+explicit_allocator_releases_all_owned_memory :: proc(t: ^testing.T) {
 	tracker: mem.Tracking_Allocator
 	mem.tracking_allocator_init(&tracker, context.allocator)
 	defer mem.tracking_allocator_destroy(&tracker)
-	context.allocator = mem.tracking_allocator(&tracker)
+	allocator := mem.tracking_allocator(&tracker)
 
 	issued, ok := issue_challenge({
 		identity = "tracked-user",
 		method = .Code,
 		hash_key = TEST_CODE_KEY,
 		now_ms = TEST_NOW_MS,
-	})
+	}, allocator)
 	testing.expect(t, ok)
 	if ok {
 		result := verify_challenge(&issued.record, .Code, issued.proof, TEST_CODE_KEY, TEST_NOW_MS)
-		delete_challenge_result(result)
-		delete_issued_challenge(issued)
+		testing.expect_value(t, result.status, Challenge_Status.Verified)
+		testing.expect(t, raw_data(result.challenge.id) == raw_data(issued.record.id))
+		delete_issued_challenge(issued, allocator)
 	}
 	testing.expect_value(t, tracker.current_memory_allocated, 0)
 	testing.expect_value(t, len(tracker.allocation_map), 0)
 }
-

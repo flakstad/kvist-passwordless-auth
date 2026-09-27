@@ -12,14 +12,9 @@ import "core:strings"
 SHA256_PREFIX      :: "v1:sha256:"
 HMAC_SHA256_PREFIX :: "v1:hmac-sha256:"
 
-clone_string :: proc(value: string) -> (result: string, ok: bool) {
-	copy, err := strings.clone(value)
+clone_string :: proc(value: string, allocator := context.allocator) -> (result: string, ok: bool) {
+	copy, err := strings.clone(value, allocator)
 	return copy, err == nil
-}
-
-owned_string :: proc(value: string) -> string {
-	copy, _ := clone_string(value)
-	return copy
 }
 
 sha256 :: proc(value: string) -> [32]byte {
@@ -37,10 +32,10 @@ hmac_sha256 :: proc(key, value: string) -> [32]byte {
 	return digest
 }
 
-base64url_no_padding :: proc(bytes: []byte) -> (encoded: string, ok: bool) {
-	padded, err := base64.encode(bytes, base64.ENC_URL_TABLE)
+base64url_no_padding :: proc(bytes: []byte, allocator := context.allocator) -> (encoded: string, ok: bool) {
+	padded, err := base64.encode(bytes, base64.ENC_URL_TABLE, allocator)
 	if err != nil do return
-	defer delete(padded)
+	defer delete(padded, allocator)
 
 	end := len(padded)
 	if strings.has_suffix(padded, "==") {
@@ -48,7 +43,7 @@ base64url_no_padding :: proc(bytes: []byte) -> (encoded: string, ok: bool) {
 	} else if strings.has_suffix(padded, "=") {
 		end -= 1
 	}
-	return clone_string(padded[:end])
+	return clone_string(padded[:end], allocator)
 }
 
 valid_base64url :: proc(value: string) -> bool {
@@ -63,52 +58,52 @@ valid_base64url :: proc(value: string) -> bool {
 	return true
 }
 
-decode_base64url :: proc(value: string) -> (decoded: []byte, ok: bool) {
+decode_base64url :: proc(value: string, allocator := context.allocator) -> (decoded: []byte, ok: bool) {
 	if !valid_base64url(value) || len(value) % 4 == 1 do return
 
 	padded: string
 	switch len(value) % 4 {
 	case 0:
-		padded, ok = clone_string(value)
+		padded, ok = clone_string(value, allocator)
 	case 2:
-		padded = fmt.aprintf("%s==", value)
+		padded = fmt.aprintf("%s==", value, allocator = allocator)
 		ok = true
 	case 3:
-		padded = fmt.aprintf("%s=", value)
+		padded = fmt.aprintf("%s=", value, allocator = allocator)
 		ok = true
 	case:
 		return
 	}
 	if !ok do return
-	defer delete(padded)
+	defer delete(padded, allocator)
 
 	err: base64.Error
-	decoded, err = base64.decode(padded, base64.DEC_URL_TABLE)
+	decoded, err = base64.decode(padded, base64.DEC_URL_TABLE, allocator = allocator)
 	ok = err == nil
 	return
 }
 
-versioned_hash :: proc(prefix: string, digest: []byte) -> (encoded: string, ok: bool) {
-	body, encoded_ok := base64url_no_padding(digest)
+versioned_hash :: proc(prefix: string, digest: []byte, allocator := context.allocator) -> (encoded: string, ok: bool) {
+	body, encoded_ok := base64url_no_padding(digest, allocator)
 	if !encoded_ok do return
-	defer delete(body)
-	return fmt.aprintf("%s%s", prefix, body), true
+	defer delete(body, allocator)
+	return fmt.aprintf("%s%s", prefix, body, allocator = allocator), true
 }
 
-hash_secret :: proc(value: string) -> (encoded: string, ok: bool) {
+hash_secret :: proc(value: string, allocator := context.allocator) -> (encoded: string, ok: bool) {
 	digest := sha256(value)
-	return versioned_hash(SHA256_PREFIX, digest[:])
+	return versioned_hash(SHA256_PREFIX, digest[:], allocator)
 }
 
-hash_secret_with_key :: proc(value, key: string) -> (encoded: string, ok: bool) {
+hash_secret_with_key :: proc(value, key: string, allocator := context.allocator) -> (encoded: string, ok: bool) {
 	if len(key) == 0 do return
 	digest := hmac_sha256(key, value)
-	return versioned_hash(HMAC_SHA256_PREFIX, digest[:])
+	return versioned_hash(HMAC_SHA256_PREFIX, digest[:], allocator)
 }
 
-legacy_sha256_hex :: proc(value: string) -> (encoded: string, ok: bool) {
+legacy_sha256_hex :: proc(value: string, allocator := context.allocator) -> (encoded: string, ok: bool) {
 	digest := sha256(value)
-	bytes, err := hex.encode(digest[:])
+	bytes, err := hex.encode(digest[:], allocator)
 	if err != nil do return
 	return transmute(string)bytes, true
 }
@@ -165,47 +160,48 @@ matches_secret_with_key :: proc(stored, value, key: string) -> bool {
 	return crypto.compare_constant_time(expected, actual[:]) == 1
 }
 
-random_token_with_bytes :: proc(byte_count: int) -> (token: string, ok: bool) {
+random_token_with_bytes :: proc(byte_count: int, allocator := context.allocator) -> (token: string, ok: bool) {
 	if byte_count < 16 || byte_count > 1024 do return
-	bytes := make([]byte, byte_count)
-	defer delete(bytes)
+	bytes := make([]byte, byte_count, allocator)
+	defer delete(bytes, allocator)
 	crypto.rand_bytes(bytes)
-	return base64url_no_padding(bytes)
+	return base64url_no_padding(bytes, allocator)
 }
 
-random_token :: proc() -> (token: string, ok: bool) {
-	return random_token_with_bytes(32)
+random_token :: proc(allocator := context.allocator) -> (token: string, ok: bool) {
+	return random_token_with_bytes(32, allocator)
 }
 
-random_code_with_digits :: proc(digits: int) -> (code: string, ok: bool) {
+random_code_with_digits :: proc(digits: int, allocator := context.allocator) -> (code: string, ok: bool) {
 	if digits < 6 || digits > 9 do return
 	bound := 1
 	for _ in 0 ..< digits do bound *= 10
 	value := rand.int_max(bound, crypto.random_generator())
-	return fmt.aprintf("%0*d", digits, value), true
+	return fmt.aprintf("%0*d", digits, value, allocator = allocator), true
 }
 
-random_code :: proc() -> (code: string, ok: bool) {
-	return random_code_with_digits(6)
+random_code :: proc(allocator := context.allocator) -> (code: string, ok: bool) {
+	return random_code_with_digits(6, allocator)
 }
 
-random_uuid :: proc() -> (id: string, ok: bool) {
+random_uuid :: proc(allocator := context.allocator) -> (id: string, ok: bool) {
 	bytes: [16]byte
 	crypto.rand_bytes(bytes[:])
 	bytes[6] = bytes[6] & 0x0f | 0x40
 	bytes[8] = bytes[8] & 0x3f | 0x80
 
-	encoded, err := hex.encode(bytes[:])
+	encoded, err := hex.encode(bytes[:], allocator)
 	if err != nil do return
-	defer delete(encoded)
+	defer delete(encoded, allocator)
 	text := string(encoded)
 	return fmt.aprintf(
 		"%s-%s-%s-%s-%s",
 		text[:8], text[8:12], text[12:16], text[16:20], text[20:32],
+		allocator = allocator,
 	), true
 }
 
-id_or_random_uuid :: proc(id: string) -> (result: string, ok: bool) {
-	if id == "" do return random_uuid()
-	return clone_string(id)
+id_or_random_uuid :: proc(id: string, allocator := context.allocator) -> (result: string, ok: bool) {
+	if id == "" do return random_uuid(allocator)
+	return clone_string(id, allocator)
 }
