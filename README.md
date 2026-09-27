@@ -18,18 +18,10 @@ Import the package from Odin:
 import auth "deps/passwordless-auth"
 ```
 
-Kvist applications can import the same Odin package directly, without a Kvist
-wrapper:
-
-```clojure
-(import auth "deps/passwordless-auth")
-```
-
 Run the tests with:
 
 ```sh
 odin test . -vet -strict-style
-kvist test tests/kvist-interop-test.kvist --track-memory --ownership-audit
 ```
 
 ## Ownership
