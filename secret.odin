@@ -77,8 +77,12 @@ decode_base64url :: proc(value: string, allocator := context.allocator) -> (deco
 	if !ok do return
 	defer delete(padded, allocator)
 
-	err: base64.Error
-	decoded, err = base64.decode(padded, base64.DEC_URL_TABLE, allocator = allocator)
+	decoded_value, err := base64.decode(
+		padded,
+		base64.DEC_URL_TABLE,
+		allocator = allocator,
+	)
+	decoded = decoded_value
 	ok = err == nil
 	return
 }
