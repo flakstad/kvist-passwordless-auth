@@ -1,0 +1,8 @@
+{
+	"version": "0.1.0",
+	"description": "Storage-independent passwordless authentication primitives",
+	"url": "https://github.com/flakstad/odin-passwordless-auth",
+	"readme": "README.md",
+	"license": "MIT",
+	"keywords": ["authentication", "passwordless", "security"]
+}

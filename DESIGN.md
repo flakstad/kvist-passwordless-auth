@@ -13,12 +13,12 @@ JSON, or another stable representation.
 
 ## Challenges
 
-`issue-challenge` returns the persisted record and its plaintext proof. The
+`issue_challenge` returns the persisted record and its plaintext proof. The
 record contains only a versioned proof hash. Magic links use 32 random bytes
 and SHA-256. Numeric codes use HMAC-SHA-256 and require an application-held key
 of at least 32 bytes.
 
-`verify-challenge` is a pure decision over a record and an explicit time. It
+`verify_challenge` is a pure decision over a record and an explicit time. It
 returns one stable status and at most one transition:
 
 - `Verified` with `Consume`
@@ -33,8 +33,8 @@ does not hide that transaction behind callbacks.
 
 ## Sessions
 
-`issue-session` returns an opaque credential once and a record containing only
-its versioned hash. `check-session` classifies a loaded record as `Active`,
+`issue_session` returns an opaque credential once and a record containing only
+its versioned hash. `check_session` classifies a loaded record as `Active`,
 `Invalid-Session`, `Expired-Session`, or `Revoked-Session`. Active results omit
 the credential hash.
 
@@ -43,4 +43,3 @@ the credential hash.
 Public issuance and verification results own cloned strings so callers can
 free them independently of persisted/input records. Explicit delete helpers
 make that ownership visible at the API boundary.
-

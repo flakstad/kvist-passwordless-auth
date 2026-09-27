@@ -1,0 +1,26 @@
+(package passwordless_auth_interop_test)
+
+(import auth "..")
+(import t "kvist:test")
+
+(def Test-Key "a-test-only-otp-pepper-that-is-long")
+
+(t.deftest odin-package-is-directly-usable-from-kvist
+  (let [[record ok]
+        (auth.challenge_from_proof
+          (auth.Challenge_Issue_Options
+            :id "challenge-1"
+            :identity "user-1"
+            :method .Code
+            :ttl_ms 60000
+            :max_attempts 3
+            :hash_key Test-Key
+            :now_ms 1000)
+          "123456")]
+    (t.is ok)
+    (when ok
+      (defer (auth.delete_challenge record))
+      (t.is (= record.expires_at_ms 61000))
+      (t.is (auth.matches_secret_with_key
+              record.proof_hash "123456" Test-Key)))))
+
