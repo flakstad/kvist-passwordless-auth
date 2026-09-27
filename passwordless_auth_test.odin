@@ -8,7 +8,7 @@ TEST_NOW_MS :: i64(1_790_244_000_000)
 TEST_CODE_KEY :: "a-test-only-otp-pepper-that-is-long"
 
 @(test)
-secret_formats_match_the_clojure_reference :: proc(t: ^testing.T) {
+secret_formats_match_reference_vectors :: proc(t: ^testing.T) {
 	plain, plain_ok := hash_secret("bearer")
 	defer if plain_ok do delete(plain)
 	keyed, keyed_ok := hash_secret_with_key("123456", TEST_CODE_KEY)

@@ -22,6 +22,7 @@ Run the tests with:
 
 ```sh
 odin test . -vet -strict-style
+odin test ./conformance -vet -strict-style
 ```
 
 ## Ownership
@@ -56,6 +57,24 @@ lock or compare-and-set guard. Missing challenge rows map to `Invalid-Proof`.
 
 Times are Unix milliseconds. Expiry is exclusive: a value is expired when
 `now-ms >= expires-at-ms`.
+
+## Store conformance
+
+The `conformance` subpackage supplies callback-based `Challenge_Store` and
+`Session_Store` contracts plus reusable assertions for storage adapters. The
+challenge suite races successful verification and failed code attempts across
+real threads, so adapter callbacks must protect the read/decide/write sequence
+with a transaction, row lock, or compare-and-set operation.
+
+```odin
+import auth_conformance "deps/passwordless-auth/conformance"
+
+@(test)
+adapter_conforms :: proc(t: ^testing.T) {
+	auth_conformance.assert_challenge_store(t, &challenge_store)
+	auth_conformance.assert_session_store(t, &session_store)
+}
+```
 
 See [DESIGN.md](DESIGN.md) and [SECURITY.md](SECURITY.md) for the complete
 boundary and security requirements.

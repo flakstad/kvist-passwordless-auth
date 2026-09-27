@@ -31,6 +31,11 @@ returns one stable status and at most one transition:
 The store must select, verify, and apply the transition atomically. The core
 does not hide that transaction behind callbacks.
 
+The optional `conformance` subpackage defines callback tables for challenge
+and session stores. Its reusable assertions include actual thread races for
+double consumption and code-attempt saturation; this lets each database
+adapter prove the atomicity requirement against its own transaction model.
+
 ## Sessions
 
 `issue_session` returns an opaque credential once and a record containing only
