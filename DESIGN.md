@@ -1,0 +1,46 @@
+# Design
+
+## Boundary
+
+The reusable boundary is credential mechanics, not an application login flow.
+The application owns identity normalization, account lookup or creation,
+authorization, URLs, email, cookies, HTTP, durable rate-limit counts, and
+transactions.
+
+Identity, subject, and metadata are opaque strings. This keeps the package
+independent of serialization and domain models. Consumers may store IDs, EDN,
+JSON, or another stable representation.
+
+## Challenges
+
+`issue-challenge` returns the persisted record and its plaintext proof. The
+record contains only a versioned proof hash. Magic links use 32 random bytes
+and SHA-256. Numeric codes use HMAC-SHA-256 and require an application-held key
+of at least 32 bytes.
+
+`verify-challenge` is a pure decision over a record and an explicit time. It
+returns one stable status and at most one transition:
+
+- `Verified` with `Consume`
+- `Invalid-Proof`
+- `Expired`
+- `Consumed`
+- `Attempts-Exhausted`
+- a failed code attempt with `Record-Failure`
+
+The store must select, verify, and apply the transition atomically. The core
+does not hide that transaction behind callbacks.
+
+## Sessions
+
+`issue-session` returns an opaque credential once and a record containing only
+its versioned hash. `check-session` classifies a loaded record as `Active`,
+`Invalid-Session`, `Expired-Session`, or `Revoked-Session`. Active results omit
+the credential hash.
+
+## Memory
+
+Public issuance and verification results own cloned strings so callers can
+free them independently of persisted/input records. Explicit delete helpers
+make that ownership visible at the API boundary.
+

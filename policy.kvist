@@ -1,0 +1,29 @@
+(package passwordless_auth)
+
+(def Recommended-Identity-Limit (i64 5))
+(def Recommended-Client-Limit (i64 20))
+
+(defenum Issuance-Reason [Allowed Identity-Limit Client-Limit Invalid-Limit])
+
+(defstruct Issuance-Decision [allowed?: bool reason: Issuance-Reason])
+
+(defn issuance-decision
+  [identity-count: i64, client-count: i64,
+   identity-limit: i64, client-limit: i64]
+  -> Issuance-Decision
+  (when (or (<= identity-limit 0) (<= client-limit 0))
+    (return (Issuance-Decision :allowed? false :reason .Invalid-Limit)))
+  (cond
+    (>= identity-count identity-limit)
+      (Issuance-Decision :allowed? false :reason .Identity-Limit)
+    (>= client-count client-limit)
+      (Issuance-Decision :allowed? false :reason .Client-Limit)
+    :else
+      (Issuance-Decision :allowed? true :reason .Allowed)))
+
+(defn recommended-issuance-decision
+  [identity-count: i64, client-count: i64]
+  -> Issuance-Decision
+  (issuance-decision identity-count client-count
+                     Recommended-Identity-Limit Recommended-Client-Limit))
+

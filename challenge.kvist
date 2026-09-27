@@ -1,0 +1,227 @@
+(package passwordless_auth)
+
+(def Default-Magic-Link-TTL-MS (i64 900000))
+(def Default-Code-TTL-MS (i64 600000))
+(def Default-Code-Digits 6)
+(def Default-Code-Max-Attempts (i64 5))
+
+(defenum Challenge-Method [Magic-Link Code])
+(defenum Challenge-Status [Verified Invalid-Proof Consumed Expired Attempts-Exhausted])
+(defenum Challenge-Transition-Op [No-Transition Consume Record-Failure])
+
+(defstruct Challenge [
+  id: string
+  identity: string
+  method: Challenge-Method
+  proof-hash: string
+  created-at-ms: i64
+  expires-at-ms: i64
+  consumed-at-ms: i64
+  consumed?: bool
+  failed-attempt-count: i64
+  max-attempts: i64
+  metadata: string
+])
+
+(defstruct Public-Challenge [
+  id: string
+  identity: string
+  method: Challenge-Method
+  created-at-ms: i64
+  expires-at-ms: i64
+  consumed-at-ms: i64
+  consumed?: bool
+  failed-attempt-count: i64
+  max-attempts: i64
+  metadata: string
+])
+
+(defstruct Issued-Challenge [record: Challenge proof: string])
+
+(defstruct Challenge-Transition [
+  op: Challenge-Transition-Op
+  consumed-at-ms: i64
+  failed-attempt-count: i64
+])
+
+(defstruct Challenge-Result [
+  status: Challenge-Status
+  challenge: Public-Challenge
+  has-challenge?: bool
+  transition: Challenge-Transition
+])
+
+(defstruct Challenge-Issue-Options [
+  id: string
+  identity: string
+  method: Challenge-Method
+  ttl-ms: i64
+  digits: int
+  max-attempts: i64
+  metadata: string
+  hash-key: string
+  now-ms: i64
+])
+
+(defn delete-challenge! [challenge: Challenge]
+  (delete challenge.id)
+  (delete challenge.identity)
+  (delete challenge.proof-hash)
+  (delete challenge.metadata))
+
+(defn delete-public-challenge! [challenge: Public-Challenge]
+  (delete challenge.id)
+  (delete challenge.identity)
+  (delete challenge.metadata))
+
+(defn delete-issued-challenge! [issued: Issued-Challenge]
+  (delete-challenge! issued.record)
+  (delete issued.proof))
+
+(defn delete-challenge-result! [result: Challenge-Result]
+  (when result.has-challenge?
+    (delete-public-challenge! result.challenge)))
+
+(defn- empty-public-challenge [] -> Public-Challenge
+  (zero Public-Challenge))
+
+(defn- empty-challenge [] -> Challenge
+  (zero Challenge))
+
+(defn- empty-issued-challenge [] -> Issued-Challenge
+  (zero Issued-Challenge))
+
+(defn- public-challenge [record: ^Challenge] -> Public-Challenge
+  (Public-Challenge
+    :id (owned record.id)
+    :identity (owned record.identity)
+    :method record.method
+    :created-at-ms record.created-at-ms
+    :expires-at-ms record.expires-at-ms
+    :consumed-at-ms record.consumed-at-ms
+    :consumed? record.consumed?
+    :failed-attempt-count record.failed-attempt-count
+    :max-attempts record.max-attempts
+    :metadata (owned record.metadata)))
+
+(defn- challenge-result [status: Challenge-Status] -> Challenge-Result
+  (Challenge-Result
+    :status status
+    :challenge (empty-public-challenge)
+    :has-challenge? false
+    :transition (Challenge-Transition :op .No-Transition
+                  :consumed-at-ms 0 :failed-attempt-count 0)))
+
+(defn- challenge-proof
+  [method: Challenge-Method, digits: int]
+  -> [proof: string, ok: bool]
+  (if (= method .Code)
+    (random-code-with-digits digits)
+    (random-token)))
+
+(defn- challenge-proof-hash
+  [method: Challenge-Method, proof: string, hash-key: string]
+  -> [encoded: string, ok: bool]
+  (if (= method .Code)
+    (hash-secret-with-key proof hash-key)
+    (hash-secret proof)))
+
+(defn issue-challenge [options: Challenge-Issue-Options]
+  -> [issued: Issued-Challenge, ok: bool]
+  (when (= options.identity "")
+    (return (empty-issued-challenge) false))
+  (when (and (= options.method .Code) (< (count options.hash-key) 32))
+    (return (empty-issued-challenge) false))
+  (let [ttl-ms (if (> options.ttl-ms 0)
+                 options.ttl-ms
+                 (if (= options.method .Code)
+                   Default-Code-TTL-MS
+                   Default-Magic-Link-TTL-MS))
+        digits (if (> options.digits 0) options.digits Default-Code-Digits)
+        max-attempts (if (> options.max-attempts 0)
+                       options.max-attempts
+                       (if (= options.method .Code)
+                         Default-Code-Max-Attempts
+                         1))]
+    (when (or (<= ttl-ms 0) (<= max-attempts 0))
+      (return (empty-issued-challenge) false))
+    (let [[id id-ok?] (id-or-random-uuid options.id)]
+      (when (not id-ok?)
+        (return (empty-issued-challenge) false))
+      (defer (delete id))
+      (let [[proof proof-ok?] (challenge-proof options.method digits)]
+        (when (not proof-ok?)
+          (return (empty-issued-challenge) false))
+        (defer (delete proof))
+        (let [[proof-hash hash-ok?]
+              (challenge-proof-hash options.method proof options.hash-key)]
+          (when (not hash-ok?)
+            (return (empty-issued-challenge) false))
+          (return
+            (Issued-Challenge
+              :record
+              (Challenge
+                :id (owned id)
+                :identity (owned options.identity)
+                :method options.method
+                :proof-hash proof-hash
+                :created-at-ms options.now-ms
+                :expires-at-ms (+ options.now-ms ttl-ms)
+                :consumed-at-ms 0
+                :consumed? false
+                :failed-attempt-count 0
+                :max-attempts max-attempts
+                :metadata (owned options.metadata))
+              :proof (owned proof))
+            true))))))
+
+(defn challenge-selector [method: Challenge-Method, id: string, proof: string]
+  -> [selector: string, ok: bool]
+  (if (= method .Magic-Link)
+    (hash-secret proof)
+    (if (= id "")
+      (return "" false)
+      (owned-result id))))
+
+(defn verify-challenge
+  [record: ^Challenge, method: Challenge-Method, proof: string,
+   hash-key: string, now-ms: i64]
+  -> Challenge-Result
+  (when (= record nil) (return (challenge-result .Invalid-Proof)))
+  (when (!= method record.method) (return (challenge-result .Invalid-Proof)))
+  (when record.consumed? (return (challenge-result .Consumed)))
+  (when (>= now-ms record.expires-at-ms) (return (challenge-result .Expired)))
+  (when (>= record.failed-attempt-count record.max-attempts)
+    (return (challenge-result .Attempts-Exhausted)))
+  (let [matches? (if (= method .Code)
+                   (matches-secret-with-key? record.proof-hash proof hash-key)
+                   (matches-secret? record.proof-hash proof))]
+    (when matches?
+      (let [result (challenge-result .Verified)]
+        (set! result.challenge (public-challenge record))
+        (set! result.has-challenge? true)
+        (set! result.transition
+          (Challenge-Transition :op .Consume :consumed-at-ms now-ms
+                                :failed-attempt-count 0))
+        (return result)))
+    (when (= method .Code)
+      (let [next-count (+ record.failed-attempt-count 1)
+            result (challenge-result
+                     (if (>= next-count record.max-attempts)
+                       .Attempts-Exhausted
+                       .Invalid-Proof))]
+        (set! result.transition
+          (Challenge-Transition :op .Record-Failure :consumed-at-ms 0
+                                :failed-attempt-count next-count))
+        (return result)))
+    (challenge-result .Invalid-Proof)))
+
+(defn apply-challenge-transition!
+  [record: ^Challenge, transition: Challenge-Transition]
+  (cond
+    (= transition.op .Consume)
+      (do
+        (set! record.consumed-at-ms transition.consumed-at-ms)
+        (set! record.consumed? true))
+    (= transition.op .Record-Failure)
+      (set! record.failed-attempt-count transition.failed-attempt-count)))

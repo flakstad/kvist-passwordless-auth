@@ -1,0 +1,143 @@
+(package passwordless_auth)
+
+(def Default-Session-TTL-MS (i64 43200000))
+
+(defenum Session-Status [Active Invalid-Session Revoked-Session Expired-Session])
+
+(defstruct Session [
+  id: string
+  subject: string
+  credential-hash: string
+  created-at-ms: i64
+  expires-at-ms: i64
+  revoked-at-ms: i64
+  revoked?: bool
+  metadata: string
+])
+
+(defstruct Public-Session [
+  id: string
+  subject: string
+  created-at-ms: i64
+  expires-at-ms: i64
+  revoked-at-ms: i64
+  revoked?: bool
+  metadata: string
+])
+
+(defstruct Issued-Session [record: Session credential: string])
+
+(defstruct Session-Result [
+  status: Session-Status
+  session: Public-Session
+  has-session?: bool
+])
+
+(defstruct Session-Issue-Options [
+  id: string
+  subject: string
+  ttl-ms: i64
+  metadata: string
+  now-ms: i64
+])
+
+(defn delete-session! [session: Session]
+  (delete session.id)
+  (delete session.subject)
+  (delete session.credential-hash)
+  (delete session.metadata))
+
+(defn delete-public-session! [session: Public-Session]
+  (delete session.id)
+  (delete session.subject)
+  (delete session.metadata))
+
+(defn delete-issued-session! [issued: Issued-Session]
+  (delete-session! issued.record)
+  (delete issued.credential))
+
+(defn delete-session-result! [result: Session-Result]
+  (when result.has-session?
+    (delete-public-session! result.session)))
+
+(defn- empty-session [] -> Session
+  (zero Session))
+
+(defn- empty-public-session [] -> Public-Session
+  (zero Public-Session))
+
+(defn- empty-issued-session [] -> Issued-Session
+  (zero Issued-Session))
+
+(defn issue-session [options: Session-Issue-Options]
+  -> [issued: Issued-Session, ok: bool]
+  (when (= options.subject "") (return (empty-issued-session) false))
+  (let [ttl-ms (if (> options.ttl-ms 0) options.ttl-ms Default-Session-TTL-MS)]
+    (when (<= ttl-ms 0) (return (empty-issued-session) false))
+    (let [[id id-ok?] (id-or-random-uuid options.id)]
+      (when (not id-ok?) (return (empty-issued-session) false))
+      (defer (delete id))
+      (let [[credential credential-ok?] (random-token)]
+        (when (not credential-ok?) (return (empty-issued-session) false))
+        (defer (delete credential))
+        (let [[credential-hash hash-ok?] (hash-secret credential)]
+          (when (not hash-ok?) (return (empty-issued-session) false))
+          (return
+            (Issued-Session
+              :record
+              (Session
+                :id (owned id)
+                :subject (owned options.subject)
+                :credential-hash credential-hash
+                :created-at-ms options.now-ms
+                :expires-at-ms (+ options.now-ms ttl-ms)
+                :revoked-at-ms 0
+                :revoked? false
+                :metadata (owned options.metadata))
+              :credential (owned credential))
+            true))))))
+
+(defn session-credential-hash [credential: string]
+  -> [encoded: string, ok: bool]
+  (hash-secret credential))
+
+(defn session-credential-hash-candidates [credential: string]
+  -> [current: string, legacy: string, ok: bool]
+  (let [[current-hash current-ok?] (hash-secret credential)]
+    (when (not current-ok?) (return "" "" false))
+    (let [[legacy-hash legacy-ok?] (legacy-sha256-hex credential)]
+      (if legacy-ok?
+        (return current-hash legacy-hash true)
+        (do
+          (delete current-hash)
+          (return "" "" false))))))
+
+(defn check-session [record: ^Session, now-ms: i64] -> Session-Result
+  (let [result (Session-Result
+                 :status .Invalid-Session
+                 :session (empty-public-session)
+                 :has-session? false)]
+    (when (= record nil) (return result))
+    (when record.revoked?
+      (set! result.status .Revoked-Session)
+      (return result))
+    (when (>= now-ms record.expires-at-ms)
+      (set! result.status .Expired-Session)
+      (return result))
+    (set! result.status .Active)
+    (set! result.session
+      (Public-Session
+        :id (owned record.id)
+        :subject (owned record.subject)
+        :created-at-ms record.created-at-ms
+        :expires-at-ms record.expires-at-ms
+        :revoked-at-ms record.revoked-at-ms
+        :revoked? record.revoked?
+        :metadata (owned record.metadata)))
+    (set! result.has-session? true)
+    result))
+
+(defn session-active? [record: ^Session, now-ms: i64] -> bool
+  (let [result (check-session record now-ms)]
+    (defer (delete-session-result! result))
+    (= result.status .Active)))
