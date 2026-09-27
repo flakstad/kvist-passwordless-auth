@@ -38,6 +38,12 @@ matching helper:
 Credential hash functions return owned strings when `ok` is true. Challenge
 and session inputs borrow strings from the caller.
 
+Use `issue-challenge` and `issue-session` in normal application flows. Storage
+adapters and deterministic tests may use `challenge-from-proof` and
+`session-from-credential`; these apply the same validation and hashing while
+accepting caller-supplied plaintext values. Delete successful returned records
+with `delete-challenge!` or `delete-session!`.
+
 ## Persistence
 
 Persist only `Challenge` and `Session` records, never the plaintext proof or
@@ -50,4 +56,3 @@ Times are Unix milliseconds. Expiry is exclusive: a value is expired when
 
 See [DESIGN.md](DESIGN.md) and [SECURITY.md](SECURITY.md) for the complete
 boundary and security requirements.
-
